@@ -1,0 +1,172 @@
+package application;
+
+import javafx.application.Application;
+import javafx.application.Platform;
+import javafx.geometry.Pos;
+import javafx.scene.Scene;
+import javafx.scene.chart.BarChart;
+import javafx.scene.chart.CategoryAxis;
+import javafx.scene.chart.NumberAxis;
+import javafx.scene.chart.PieChart;
+import javafx.scene.control.*;
+import javafx.scene.input.KeyCode;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.VBox;
+import javafx.stage.Stage;
+
+import java.util.HashMap;
+import java.util.Map;
+
+public class ExpenseTrackerApp extends Application {
+    private ExpenseTracker expenseTracker;
+    private Map<String, Double> categorySums;
+    private VBox expenseList;
+
+    public static void main(String[] args) {
+        launch(args);
+    }
+
+    @Override
+    public void start(Stage primaryStage) {
+        expenseTracker = new ExpenseTracker();
+        categorySums = new HashMap<>();
+        expenseList = new VBox(5);
+
+        VBox root = new VBox(10);
+        Label categoryLabel = new Label("Enter Expense Category:");
+        TextField categoryField = new TextField();
+        Label amountLabel = new Label("Enter Expense Amount:");
+        TextField amountField = new TextField();
+        Button addButton = new Button("Add Expense");
+
+        PieChart pieChart = new PieChart();
+        BarChart<String, Number> barChart = createBarChart();
+
+        // Action for Add Expense button
+        addButton.setOnAction(event -> {
+            String category = categoryField.getText();
+            String amountText = amountField.getText();
+            if (category.isEmpty() || amountText.isEmpty()) {
+                showAlert("Error", "Please fill both fields");
+            } else {
+                try {
+                    double amount = Double.parseDouble(amountText);
+
+                    // Run add operation on a separate thread
+                    new Thread(() -> {
+                        try {
+                            Expense expense = new Expense(category, amount);
+                            expenseTracker.addExpense(expense);
+                            categorySums.put(category, categorySums.getOrDefault(category, 0.0) + amount);
+
+                            // Update UI elements on the JavaFX Application Thread
+                            Platform.runLater(() -> {
+                                categoryField.clear();
+                                amountField.clear();
+                                updateExpenseList(pieChart, barChart);
+                            });
+                        } catch (Exception e) {
+                            Platform.runLater(() -> showAlert("Error", "Failed to add expense: " + e.getMessage()));
+                        }
+                    }).start();
+
+                } catch (NumberFormatException e) {
+                    showAlert("Error", "Please enter a valid amount");
+                }
+            }
+        });
+
+        amountField.setOnKeyPressed(event -> {
+            if (event.getCode() == KeyCode.ENTER) {
+                addButton.fire();
+            }
+        });
+
+        root.getChildren().addAll(categoryLabel, categoryField, amountLabel, amountField, addButton, expenseList, pieChart, barChart);
+
+        Scene scene = new Scene(root, 600, 600);
+        primaryStage.setTitle("Expense Tracker");
+        primaryStage.setScene(scene);
+        primaryStage.show();
+    }
+
+    private void updateExpenseList(PieChart pieChart, BarChart<String, Number> barChart) {
+        expenseList.getChildren().clear();
+
+        for (Expense expense : expenseTracker.getExpenses()) {
+            HBox expenseEntry = new HBox(10);
+            expenseEntry.setAlignment(Pos.CENTER_LEFT);
+
+            Label expenseLabel = new Label(expense.getCategory() + ": $" + expense.getAmount());
+            Button deleteButton = new Button("Delete");
+
+            deleteButton.setOnAction(e -> {
+                // Delete expense in a separate thread
+                new Thread(() -> {
+                    try {
+                        expenseTracker.removeExpense(expense);
+
+                        // Update category sums
+                        double updatedAmount = categorySums.get(expense.getCategory()) - expense.getAmount();
+                        if (updatedAmount <= 0) {
+                            categorySums.remove(expense.getCategory());
+                        } else {
+                            categorySums.put(expense.getCategory(), updatedAmount);
+                        }
+
+                        // Update UI elements on the JavaFX Application Thread
+                        Platform.runLater(() -> {
+                            updateExpenseList(pieChart, barChart);
+                            updatePieChart(pieChart);
+                            updateBarChart(barChart);
+                        });
+                    } catch (Exception ex) {
+                        Platform.runLater(() -> showAlert("Error", "Failed to delete expense: " + ex.getMessage()));
+                    }
+                }).start();
+            });
+
+            expenseEntry.getChildren().addAll(expenseLabel, deleteButton);
+            expenseList.getChildren().add(expenseEntry);
+        }
+
+        updatePieChart(pieChart);
+        updateBarChart(barChart);
+    }
+
+    private void updatePieChart(PieChart pieChart) {
+        pieChart.getData().clear();
+        for (Map.Entry<String, Double> entry : categorySums.entrySet()) {
+            PieChart.Data slice = new PieChart.Data(entry.getKey(), entry.getValue());
+            pieChart.getData().add(slice);
+        }
+    }
+
+    private void updateBarChart(BarChart<String, Number> barChart) {
+        barChart.getData().clear();
+
+        BarChart.Series<String, Number> series = new BarChart.Series<>();
+        for (Map.Entry<String, Double> entry : categorySums.entrySet()) {
+            series.getData().add(new BarChart.Data<>(entry.getKey(), entry.getValue()));
+        }
+
+        barChart.getData().add(series);
+    }
+
+    private BarChart<String, Number> createBarChart() {
+        CategoryAxis xAxis = new CategoryAxis();
+        xAxis.setLabel("Category");
+        NumberAxis yAxis = new NumberAxis();
+        yAxis.setLabel("Amount");
+
+        return new BarChart<>(xAxis, yAxis);
+    }
+
+    private void showAlert(String title, String message) {
+        Alert alert = new Alert(Alert.AlertType.ERROR);
+        alert.setTitle(title);
+        alert.setHeaderText(null);
+        alert.setContentText(message);
+        alert.showAndWait();
+    }
+}
